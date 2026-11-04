@@ -387,15 +387,16 @@ namespace ArenaRacer
                 case GameSession.ConnectionState.Offline:
                     return verbose ? $"Offline · {session.OfflineReason}. You'll race bots locally." : "OFFLINE · BOTS";
                 default:
-                    NetworkRunner runner = session.Runner;
-                    SessionInfo info = runner.SessionInfo;
+                    SessionInfo info = session.Runner != null ? session.Runner.SessionInfo : null;
+                    if (info == null || !info.IsValid || info.Name == null) return verbose ? "Joining a room…" : "JOINING…";
                     string room = info.Name.Length > 6 ? info.Name.Substring(0, 6).ToUpperInvariant() : info.Name.ToUpperInvariant();
+                    string region = info.Region ?? "?";
                     int players = info.PlayerCount;
                     if (verbose)
                         return players > 1
-                            ? $"Online · {info.Region} · room {room} · {players - 1} other player{(players > 2 ? "s" : "")} here"
-                            : $"Online · {info.Region} · room {room} · you're the only player: bots fill the grid";
-                    return $"ONLINE · {info.Region.ToUpperInvariant()} · ROOM {room} · {players}/{RaceDirector.CarCount}";
+                            ? $"Online · {region} · room {room} · {players - 1} other player{(players > 2 ? "s" : "")} here"
+                            : $"Online · {region} · room {room} · you're the only player: bots fill the grid";
+                    return $"ONLINE · {region.ToUpperInvariant()} · ROOM {room} · {players}/{RaceDirector.CarCount}";
             }
         }
 

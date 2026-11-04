@@ -46,6 +46,7 @@ namespace ArenaRacer
         float _nextPingSample;
         float _bytesIn, _bytesOut, _bandwidthWindow;
         float _shownIn = -1f, _shownOut = -1f;
+        float _packetsIn, _packetsOut, _shownPacketsIn = -1f, _shownPacketsOut = -1f;
 
         GameObject _root;
         Text _keys, _values, _timelineCaption, _pingCaption;
@@ -235,7 +236,6 @@ namespace ArenaRacer
             float rtt = (float)runner.GetPlayerRtt(runner.LocalPlayer);
             float interpolation = Mathf.Max(0f, runner.LocalRenderTime - runner.RemoteRenderTime);
             float tickRate = 1f / runner.DeltaTime;
-            TickRate.Resolved rates = TickRate.Resolve(runner.Config.Simulation.TickRateSelection);
             int simulatedHere = 0, bots = 0;
             foreach (NetCar car in NetCar.All)
             {
@@ -246,20 +246,40 @@ namespace ArenaRacer
             bool online = session.IsOnline;
             string master = !online ? "you (offline)" : PlayerName(RaceDirector.Instance != null ? RaceDirector.Instance.Object.StateAuthority : PlayerRef.None, runner);
             SessionInfo info = runner.SessionInfo;
+            bool hasSession = info != null && info.IsValid && info.Name != null;
 
             _keys.text =
-                "Mode\nRoom\nMaster client\nPing (RTT)\nTick\nSend rate\nRemote cars drawn\nYour input\nBandwidth\nCars simulated here";
+                "Mode\nRoom\nMaster client\nPing (RTT)\nTick\nPackets\nRemote cars drawn\nYour input\nBandwidth\nCars simulated here";
             _values.text =
                 $"{(online ? "Shared (Photon Cloud)" : "Single (offline, no network)")}\n" +
-                $"{(online ? $"{info.Name.Substring(0, Mathf.Min(6, info.Name.Length)).ToUpperInvariant()} · {info.Region} · {info.PlayerCount}/{RaceDirector.CarCount} players" : "-")}\n" +
+                $"{(online && hasSession ? $"{info.Name.Substring(0, Mathf.Min(6, info.Name.Length)).ToUpperInvariant()} · {info.Region} · {info.PlayerCount}/{RaceDirector.CarCount} players" : "-")}\n" +
                 $"{master}\n" +
                 $"{(online ? $"{rtt * 1000f:0} ms" : "-")}\n" +
                 $"#{(int)runner.Tick} · {tickRate:0} Hz ({runner.DeltaTime * 1000f:0.0} ms)\n" +
-                $"{(online ? $"{rates.ClientSend} Hz up · {rates.ServerSend} Hz down" : "-")}\n" +
+                $"{PacketText(online)}\n" +
                 $"{(online ? $"{interpolation * 1000f:0} ms in the past (interpolated)" : "-")}\n" +
                 $"next tick here{(online ? $" · ~{othersSeeDelay * 1000f:0} ms on other screens" : "")}\n" +
-                $"{(online && _shownIn >= 0f ? $"in {_shownIn / 1024f:0.0} kB/s · out {_shownOut / 1024f:0.0} kB/s" : "-")}\n" +
+                $"{BandwidthText(online)}\n" +
                 $"{simulatedHere} of {NetCar.All.Count} ({bots} bots)";
+        }
+
+        /// <summary>
+        /// Measured, not read from the config: Shared mode overrides the project's tick settings at runtime
+        /// (to 32 Hz ticks and 16 Hz sends in Fusion 2.0), so the configured numbers would be wrong.
+        /// </summary>
+        string PacketText(bool online)
+        {
+            if (!online || _shownPacketsIn < 0f) return "-";
+            if (_shownPacketsIn <= 0f && _shownPacketsOut <= 0f) return "n/a (Fusion release DLLs)";
+            return $"{_shownPacketsOut:0}/s up · {_shownPacketsIn:0}/s down (measured)";
+        }
+
+        string BandwidthText(bool online)
+        {
+            if (!online || _shownIn < 0f) return "-";
+            // Fusion only fills its statistics snapshot in its Debug assemblies; never show a made-up zero.
+            if (_shownIn <= 0f && _shownOut <= 0f) return "n/a (Fusion release DLLs)";
+            return $"in {_shownIn / 1024f:0.0} kB/s · out {_shownOut / 1024f:0.0} kB/s";
         }
 
         void SampleStatistics(NetworkRunner runner)
@@ -279,13 +299,17 @@ namespace ArenaRacer
                 FusionStatisticsSnapshot snapshot = statistics.CompleteSnapshot;
                 _bytesIn += snapshot.InBandwidth;
                 _bytesOut += snapshot.OutBandwidth;
+                _packetsIn += snapshot.InPackets;
+                _packetsOut += snapshot.OutPackets;
             }
             _bandwidthWindow += Time.unscaledDeltaTime;
             if (_bandwidthWindow >= 1f)
             {
                 _shownIn = _bytesIn / _bandwidthWindow;
                 _shownOut = _bytesOut / _bandwidthWindow;
-                _bytesIn = _bytesOut = _bandwidthWindow = 0f;
+                _shownPacketsIn = _packetsIn / _bandwidthWindow;
+                _shownPacketsOut = _packetsOut / _bandwidthWindow;
+                _bytesIn = _bytesOut = _packetsIn = _packetsOut = _bandwidthWindow = 0f;
             }
         }
 

@@ -7,7 +7,7 @@ A small online multiplayer racer built in Unity 6 with **Photon Fusion 2 (Shared
 
 - Six cars, three laps, about two minutes a race. Bots fill every empty seat, so pressing **Race** starts a race straight away.
 - Open the page in a second window, or send it to a friend, and the new player **takes over a bot's car mid-race**.
-- Press **Tab** for the **Dev View**, a live picture of the netcode. It shows remote cars' newest snapshot and extrapolated position as ghosts, where other players see *your* car, who simulates each car, ping, tick and send rates, interpolation delay, bandwidth, and a timeline of snapshots arriving.
+- Press **Tab** for the **Dev View**, a live picture of the netcode. It shows remote cars' newest snapshot and extrapolated position as ghosts, where other players see *your* car, who simulates each car, ping, tick rate, measured packet rates, interpolation delay, bandwidth, and a timeline of snapshots arriving.
 
 ## The three files worth reading
 
@@ -28,7 +28,7 @@ Also of interest: [`CarPhysics.cs`](Assets/ArenaRacer/Scripts/Car/CarPhysics.cs)
 - **Pausing a shared race.** If you're the only human, the race freezes, and every tick-based timer is shifted when it resumes. With other humans in the room, a bot drives your car until you resume.
 - **Offline fallback.** With no App ID or no connection, the same code runs in Fusion's `GameMode.Single`.
 
-What a test session from Pakistan to the EU region showed in the Dev View: about 180 ms RTT and 32 Hz ticks and sends. Remote cars are drawn about 300 ms behind local time. Bandwidth was about 5 kB/s in for a non-master, and about 4 kB/s out for the master, which simulates five bots and its own car. When the master's tab closed, the other client became master and adopted all five bots within about 3 seconds, and the race carried on.
+What a test session from Pakistan to the EU region showed in the Dev View: about 180 ms RTT, 32 Hz ticks and 16 Hz sends (Shared mode's rates). Remote cars are drawn about 300 ms behind local time. Bandwidth was about 5 kB/s in for a non-master, and about 4 kB/s out for the master, which simulates five bots and its own car. When the master's tab closed, the other client became master and adopted all five bots within about 3 seconds, and the race carried on.
 
 ## Building
 

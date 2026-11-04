@@ -40,6 +40,15 @@ namespace ArenaRacer
         float _nextCarRequest;
         float _nextAutoVote;
         bool _shuttingDownOnPurpose;
+        string _roomName;
+        bool _connectingOnline;
+        bool _reconnecting;
+        float _lastReconnect;
+        bool _wasOnline;
+        int _retries;
+        const string LostConnection = "Lost the connection to Photon";
+
+        static bool MidRace => RaceDirector.Instance != null && RaceDirector.Instance.Phase == RacePhase.Racing;
         readonly HashSet<PlayerRef> _knownPlayers = new();
 
         void Awake()
@@ -49,7 +58,10 @@ namespace ArenaRacer
             AutopilotClient = UrlParameter("autopilot") == "1";
         }
 
-        async void Start()
+        async void Start() => await Connect(UrlParameter("room"));
+
+        /// <summary>Join (or create) a Shared-mode room; null joins any open one. Falls back to offline on failure.</summary>
+        async Task Connect(string room)
         {
             string appId = PhotonAppSettings.Global.AppSettings.AppIdFusion;
             if (string.IsNullOrWhiteSpace(appId))
@@ -60,23 +72,71 @@ namespace ArenaRacer
 
             State = ConnectionState.Connecting;
             _connectStarted = Time.unscaledTime;
-            string room = UrlParameter("room");
+            _shuttingDownOnPurpose = false;
+            _connectingOnline = true;
             StartGameResult result = await StartRunner(GameMode.Shared, string.IsNullOrEmpty(room) ? null : room);
-            if (result.Ok)
+            _connectingOnline = false;
+            if (result.Ok && !Runner.IsShutdown)
             {
                 State = ConnectionState.Online;
+                _wasOnline = true;
+                _retries = 0;
+                _roomName = Runner.SessionInfo != null && Runner.SessionInfo.IsValid ? Runner.SessionInfo.Name : room;
                 return;
             }
-            await StartOffline(result.ShutdownReason == ShutdownReason.Ok ? "Connection timed out" : Describe(result.ShutdownReason));
+            // The connection can also die between StartGame() succeeding and this line running (a throttled
+            // background tab does that), so "Ok" with a runner that has already shut down counts as a failure.
+            string reason = result.Ok ? LostConnection
+                : result.ShutdownReason == ShutdownReason.Ok ? "Connection timed out"
+                : Describe(result.ShutdownReason);
+            await StartOffline(reason);
+        }
+
+        /// <summary>The room dropped us (often a background tab the browser stopped updating). Rejoin it.</summary>
+        async Task Reconnect()
+        {
+            if (_reconnecting) return;
+            _reconnecting = true;
+            _lastReconnect = Time.unscaledTime;
+            Paused = false;
+            await Task.Yield();  // let Fusion finish tearing the old runner down first
+            await Connect(_roomName);
+            _reconnecting = false;
+        }
+
+        /// <summary>
+        /// Watchdog: however the connection was lost (timeout callback, a race with StartGame, a sleeping tab),
+        /// a session that claims to be online without a running runner gets rejoined. And if a lost connection
+        /// pushed us offline, we try online again once the tab has focus.
+        /// </summary>
+        void KeepConnected()
+        {
+            if (_reconnecting) return;
+            bool runnerDead = Runner == null || Runner.IsShutdown;  // (IsRunning is still false for a moment after a good start)
+            if (State == ConnectionState.Online && runnerDead)
+            {
+                Notice?.Invoke("Connection lost · rejoining the room");
+                _ = Reconnect();
+            }
+            else if (State == ConnectionState.Offline && (_wasOnline || OfflineReason == LostConnection) && _retries < 5 && Application.isFocused
+                     && Time.unscaledTime - _lastReconnect > 15f && !MidRace)
+            {
+                _retries++;
+                Notice?.Invoke("Trying to get back online");
+                _ = Reconnect();
+            }
         }
 
         void Update()
         {
-            if (State == ConnectionState.Connecting && Runner != null && Time.unscaledTime - _connectStarted > connectTimeout)
+            if (_connectingOnline && Runner != null && Time.unscaledTime - _connectStarted > connectTimeout)
             {
                 _shuttingDownOnPurpose = true;
+                _connectingOnline = false;
                 Runner.Shutdown();  // StartGame() then returns a failed result and we go offline
             }
+
+            KeepConnected();
 
             if (AutopilotClient && !WantsToRace && State != ConnectionState.Connecting) WantsToRace = true;
             if (WantsToRace) ClaimCarWhenPossible();
@@ -119,6 +179,7 @@ namespace ArenaRacer
 
         async Task StartOffline(string reason)
         {
+            State = ConnectionState.Connecting;  // until the offline runner is up, there is no session to show
             OfflineReason = reason;
             Debug.Log($"[ArenaRacer] Offline mode: {reason}");
             StartGameResult result = await StartRunner(GameMode.Single, "offline");
@@ -201,11 +262,8 @@ namespace ArenaRacer
 
         public void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
         {
-            if (runner != Runner || _shuttingDownOnPurpose || State != ConnectionState.Online) return;
-            // Lost the room mid-session (tab slept too long, network dropped): keep playing offline.
-            Notice?.Invoke("Disconnected · racing bots offline");
-            Paused = false;
-            _ = StartOffline("Disconnected: " + Describe(shutdownReason));
+            // Recovery happens in KeepConnected(): it also covers shutdowns that race with StartGame().
+            if (runner == Runner && !_shuttingDownOnPurpose) Debug.Log($"[ArenaRacer] Runner shut down: {shutdownReason}");
         }
 
         public void OnDisconnectedFromServer(NetworkRunner runner, NetDisconnectReason reason) { }
