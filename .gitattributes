@@ -1,0 +1,7 @@
+* text=auto
+*.cs text eol=lf
+*.shader text eol=lf
+*.md text eol=lf
+*.dll binary
+*.wav binary
+*.png binary
